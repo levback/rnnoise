@@ -37,9 +37,6 @@
 
 #include "pitch.h"
 #include "common.h"
-//#include "modes.h"
-//#include "stack_alloc.h"
-//#include "mathops.h"
 #include "celt_lpc.h"
 #include "math.h"
 
@@ -280,108 +277,121 @@ void celt_pitch_xcorr(const opus_val16 *_x, const opus_val16 *_y,
 #endif
 }
 
+inline float fastabs(float f) {
+    int i = ((*(int *) &f) & 0x7fffffff);
+    return (*(float *) &i);
+}
+
 void pitch_search(const opus_val16 *x_lp, opus_val16 *y,
-                  int len, int max_pitch, int *pitch)
-{
-   int i, j;
-   int lag;
-   int best_pitch[2]={0,0};
+                  int len, int max_pitch, int *pitch) {
+    int i, j;
+    int lag;
+    int best_pitch[2] = {0, 0};
 #ifdef FIXED_POINT
-   opus_val32 maxcorr;
-   opus_val32 xmax, ymax;
-   int shift=0;
+    opus_val32 maxcorr;
+    opus_val32 xmax, ymax;
+    int shift=0;
 #endif
-   int offset;
+    int offset;
 
-   celt_assert(len>0);
-   celt_assert(max_pitch>0);
-   lag = len+max_pitch;
+    celt_assert(len > 0);
+    celt_assert(max_pitch > 0);
+    lag = len + max_pitch;
 
-   opus_val16 x_lp4[len>>2];
-   opus_val16 y_lp4[lag>>2];
-   opus_val32 xcorr[max_pitch>>1];
+    opus_val16 *x_lp4 = rnnoise_alloc((len >> 2) * sizeof(opus_val16));
+    opus_val16 *y_lp4 = rnnoise_alloc((lag >> 2) * sizeof(opus_val16));
+    opus_val32 *xcorr = rnnoise_alloc((max_pitch >> 1) * sizeof(opus_val32));
+    if (x_lp4 == NULL || y_lp4 == NULL || xcorr == NULL) {
 
-   /* Downsample by 2 again */
-   for (j=0;j<len>>2;j++)
-      x_lp4[j] = x_lp[2*j];
-   for (j=0;j<lag>>2;j++)
-      y_lp4[j] = y[2*j];
+        rnnoise_free(x_lp4);
+        rnnoise_free(xcorr);
+        rnnoise_free(y_lp4);
+        printf("[%s %d] malloc failed\n", __FUNCTION__, __LINE__);
+        return;
+    }
+
+    /* Downsample by 2 again */
+    for (j = 0; j < len >> 2; j++)
+        x_lp4[j] = x_lp[2 * j];
+    for (j = 0; j < lag >> 2; j++)
+        y_lp4[j] = y[2 * j];
 
 #ifdef FIXED_POINT
-   xmax = celt_maxabs16(x_lp4, len>>2);
-   ymax = celt_maxabs16(y_lp4, lag>>2);
-   shift = celt_ilog2(MAX32(1, MAX32(xmax, ymax)))-11;
-   if (shift>0)
-   {
-      for (j=0;j<len>>2;j++)
-         x_lp4[j] = SHR16(x_lp4[j], shift);
-      for (j=0;j<lag>>2;j++)
-         y_lp4[j] = SHR16(y_lp4[j], shift);
-      /* Use double the shift for a MAC */
-      shift *= 2;
-   } else {
-      shift = 0;
-   }
+    xmax = celt_maxabs16(x_lp4, len>>2);
+    ymax = celt_maxabs16(y_lp4, lag>>2);
+    shift = celt_ilog2(MAX32(1, MAX32(xmax, ymax)))-11;
+    if (shift>0)
+    {
+       for (j=0;j<len>>2;j++)
+          x_lp4[j] = SHR16(x_lp4[j], shift);
+       for (j=0;j<lag>>2;j++)
+          y_lp4[j] = SHR16(y_lp4[j], shift);
+       /* Use double the shift for a MAC */
+       shift *= 2;
+    } else {
+       shift = 0;
+    }
 #endif
 
-   /* Coarse search with 4x decimation */
+    /* Coarse search with 4x decimation */
 
 #ifdef FIXED_POINT
-   maxcorr =
+    maxcorr =
 #endif
-   celt_pitch_xcorr(x_lp4, y_lp4, xcorr, len>>2, max_pitch>>2);
+    celt_pitch_xcorr(x_lp4, y_lp4, xcorr, len >> 2, max_pitch >> 2);
 
-   find_best_pitch(xcorr, y_lp4, len>>2, max_pitch>>2, best_pitch
+    find_best_pitch(xcorr, y_lp4, len >> 2, max_pitch >> 2, best_pitch
 #ifdef FIXED_POINT
-                   , 0, maxcorr
+            , 0, maxcorr
 #endif
-                   );
+    );
 
-   /* Finer search with 2x decimation */
+    /* Finer search with 2x decimation */
 #ifdef FIXED_POINT
-   maxcorr=1;
+    maxcorr=1;
 #endif
-   for (i=0;i<max_pitch>>1;i++)
-   {
-      opus_val32 sum;
-      xcorr[i] = 0;
-      if (abs(i-2*best_pitch[0])>2 && abs(i-2*best_pitch[1])>2)
-         continue;
+    for (i = 0; i < max_pitch >> 1; i++) {
+        opus_val32 sum;
+        xcorr[i] = 0;
+        if (fastabs(i - 2 * best_pitch[0]) > 2 && fastabs(i - 2 * best_pitch[1]) > 2)
+            continue;
 #ifdef FIXED_POINT
-      sum = 0;
-      for (j=0;j<len>>1;j++)
-         sum += SHR32(MULT16_16(x_lp[j],y[i+j]), shift);
+        sum = 0;
+        for (j=0;j<len>>1;j++)
+           sum += SHR32(MULT16_16(x_lp[j],y[i+j]), shift);
 #else
-      sum = celt_inner_prod(x_lp, y+i, len>>1);
+        sum = celt_inner_prod(x_lp, y + i, len >> 1);
 #endif
-      xcorr[i] = MAX32(-1, sum);
+        xcorr[i] = MAX32(-1, sum);
 #ifdef FIXED_POINT
-      maxcorr = MAX32(maxcorr, sum);
+        maxcorr = MAX32(maxcorr, sum);
 #endif
-   }
-   find_best_pitch(xcorr, y, len>>1, max_pitch>>1, best_pitch
+    }
+    find_best_pitch(xcorr, y, len >> 1, max_pitch >> 1, best_pitch
 #ifdef FIXED_POINT
-                   , shift+1, maxcorr
+            , shift+1, maxcorr
 #endif
-                   );
+    );
 
-   /* Refine by pseudo-interpolation */
-   if (best_pitch[0]>0 && best_pitch[0]<(max_pitch>>1)-1)
-   {
-      opus_val32 a, b, c;
-      a = xcorr[best_pitch[0]-1];
-      b = xcorr[best_pitch[0]];
-      c = xcorr[best_pitch[0]+1];
-      if ((c-a) > MULT16_32_Q15(QCONST16(.7f,15),b-a))
-         offset = 1;
-      else if ((a-c) > MULT16_32_Q15(QCONST16(.7f,15),b-c))
-         offset = -1;
-      else
-         offset = 0;
-   } else {
-      offset = 0;
-   }
-   *pitch = 2*best_pitch[0]-offset;
+    /* Refine by pseudo-interpolation */
+    if (best_pitch[0] > 0 && best_pitch[0] < (max_pitch >> 1) - 1) {
+        opus_val32 a, b, c;
+        a = xcorr[best_pitch[0] - 1];
+        b = xcorr[best_pitch[0]];
+        c = xcorr[best_pitch[0] + 1];
+        if ((c - a) > MULT16_32_Q15(QCONST16(.7f, 15), b - a))
+            offset = 1;
+        else if ((a - c) > MULT16_32_Q15(QCONST16(.7f, 15), b - c))
+            offset = -1;
+        else
+            offset = 0;
+    } else {
+        offset = 0;
+    }
+    *pitch = 2 * best_pitch[0] - offset;
+    rnnoise_free(x_lp4);
+    rnnoise_free(y_lp4);
+    rnnoise_free(xcorr);
 }
 
 #ifdef FIXED_POINT
@@ -413,114 +423,116 @@ static opus_val16 compute_pitch_gain(opus_val32 xy, opus_val32 xx, opus_val32 yy
    return EXTRACT16(MIN32(g, Q15ONE));
 }
 #else
-static opus_val16 compute_pitch_gain(opus_val32 xy, opus_val32 xx, opus_val32 yy)
-{
-   return xy/sqrt(1+xx*yy);
+
+
+static opus_val16 compute_pitch_gain(opus_val32 xy, opus_val32 xx, opus_val32 yy) {
+    return xy * fastInvSqrt(1 + xx * yy);
 }
+
 #endif
 
 static const int second_check[16] = {0, 0, 3, 2, 3, 2, 5, 2, 3, 2, 3, 2, 5, 2, 3, 2};
+
 opus_val16 remove_doubling(opus_val16 *x, int maxperiod, int minperiod,
-      int N, int *T0_, int prev_period, opus_val16 prev_gain)
-{
-   int k, i, T, T0;
-   opus_val16 g, g0;
-   opus_val16 pg;
-   opus_val32 xy,xx,yy,xy2;
-   opus_val32 xcorr[3];
-   opus_val32 best_xy, best_yy;
-   int offset;
-   int minperiod0;
+                           int N, int *T0_, int prev_period, opus_val16 prev_gain) {
+    int k, i, T, T0;
+    opus_val16 g, g0;
+    opus_val16 pg;
+    opus_val32 xy, xx, yy, xy2;
+    opus_val32 xcorr[3];
+    opus_val32 best_xy, best_yy;
+    int offset;
+    int minperiod0;
 
-   minperiod0 = minperiod;
-   maxperiod /= 2;
-   minperiod /= 2;
-   *T0_ /= 2;
-   prev_period /= 2;
-   N /= 2;
-   x += maxperiod;
-   if (*T0_>=maxperiod)
-      *T0_=maxperiod-1;
+    minperiod0 = minperiod;
+    maxperiod /= 2;
+    minperiod /= 2;
+    *T0_ /= 2;
+    prev_period /= 2;
+    N /= 2;
+    x += maxperiod;
+    if (*T0_ >= maxperiod)
+        *T0_ = maxperiod - 1;
 
-   T = T0 = *T0_;
-   opus_val32 yy_lookup[maxperiod+1];
-   dual_inner_prod(x, x, x-T0, N, &xx, &xy);
-   yy_lookup[0] = xx;
-   yy=xx;
-   for (i=1;i<=maxperiod;i++)
-   {
-      yy = yy+MULT16_16(x[-i],x[-i])-MULT16_16(x[N-i],x[N-i]);
-      yy_lookup[i] = MAX32(0, yy);
-   }
-   yy = yy_lookup[T0];
-   best_xy = xy;
-   best_yy = yy;
-   g = g0 = compute_pitch_gain(xy, xx, yy);
-   /* Look for any pitch at T/k */
-   for (k=2;k<=15;k++)
-   {
-      int T1, T1b;
-      opus_val16 g1;
-      opus_val16 cont=0;
-      opus_val16 thresh;
-      T1 = (2*T0+k)/(2*k);
-      if (T1 < minperiod)
-         break;
-      /* Look for another strong correlation at T1b */
-      if (k==2)
-      {
-         if (T1+T0>maxperiod)
-            T1b = T0;
-         else
-            T1b = T0+T1;
-      } else
-      {
-         T1b = (2*second_check[k]*T0+k)/(2*k);
-      }
-      dual_inner_prod(x, &x[-T1], &x[-T1b], N, &xy, &xy2);
-      xy = HALF32(xy + xy2);
-      yy = HALF32(yy_lookup[T1] + yy_lookup[T1b]);
-      g1 = compute_pitch_gain(xy, xx, yy);
-      if (abs(T1-prev_period)<=1)
-         cont = prev_gain;
-      else if (abs(T1-prev_period)<=2 && 5*k*k < T0)
-         cont = HALF16(prev_gain);
-      else
-         cont = 0;
-      thresh = MAX16(QCONST16(.3f,15), MULT16_16_Q15(QCONST16(.7f,15),g0)-cont);
-      /* Bias against very high pitch (very short period) to avoid false-positives
-         due to short-term correlation */
-      if (T1<3*minperiod)
-         thresh = MAX16(QCONST16(.4f,15), MULT16_16_Q15(QCONST16(.85f,15),g0)-cont);
-      else if (T1<2*minperiod)
-         thresh = MAX16(QCONST16(.5f,15), MULT16_16_Q15(QCONST16(.9f,15),g0)-cont);
-      if (g1 > thresh)
-      {
-         best_xy = xy;
-         best_yy = yy;
-         T = T1;
-         g = g1;
-      }
-   }
-   best_xy = MAX32(0, best_xy);
-   if (best_yy <= best_xy)
-      pg = Q15ONE;
-   else
-      pg = best_xy/(best_yy+1);
+    T = T0 = *T0_;
+    opus_val32 *yy_lookup = rnnoise_alloc((maxperiod + 1) * sizeof(opus_val32));
+    if (yy_lookup == NULL) {
+        printf("[%s %d] malloc failed\n", __FUNCTION__, __LINE__);
+        return 0;
+    }
+    dual_inner_prod(x, x, x - T0, N, &xx, &xy);
+    yy_lookup[0] = xx;
+    yy = xx;
+    for (i = 1; i <= maxperiod; i++) {
+        yy = yy + MULT16_16(x[-i], x[-i]) - MULT16_16(x[N - i], x[N - i]);
+        yy_lookup[i] = MAX32(0, yy);
+    }
+    yy = yy_lookup[T0];
+    best_xy = xy;
+    best_yy = yy;
+    g = g0 = compute_pitch_gain(xy, xx, yy);
+    /* Look for any pitch at T/k */
+    for (k = 2; k <= 15; k++) {
+        int T1, T1b;
+        opus_val16 g1;
+        opus_val16 cont = 0;
+        opus_val16 thresh;
+        T1 = (2 * T0 + k) / (2 * k);
+        if (T1 < minperiod)
+            break;
+        /* Look for another strong correlation at T1b */
+        if (k == 2) {
+            if (T1 + T0 > maxperiod)
+                T1b = T0;
+            else
+                T1b = T0 + T1;
+        } else {
+            T1b = (2 * second_check[k] * T0 + k) / (2 * k);
+        }
+        dual_inner_prod(x, &x[-T1], &x[-T1b], N, &xy, &xy2);
+        xy = HALF32(xy + xy2);
+        yy = HALF32(yy_lookup[T1] + yy_lookup[T1b]);
+        g1 = compute_pitch_gain(xy, xx, yy);
+        if (fastabs(T1 - prev_period) <= 1)
+            cont = prev_gain;
+        else if (fastabs(T1 - prev_period) <= 2 && 5 * k * k < T0)
+            cont = HALF16(prev_gain);
+        else
+            cont = 0;
+        thresh = MAX16(QCONST16(.3f, 15), MULT16_16_Q15(QCONST16(.7f, 15), g0) - cont);
+        /* Bias against very high pitch (very short period) to avoid false-positives
+           due to short-term correlation */
+        if (T1 < 3 * minperiod)
+            thresh = MAX16(QCONST16(.4f, 15), MULT16_16_Q15(QCONST16(.85f, 15), g0) - cont);
+        else if (T1 < 2 * minperiod)
+            thresh = MAX16(QCONST16(.5f, 15), MULT16_16_Q15(QCONST16(.9f, 15), g0) - cont);
+        if (g1 > thresh) {
+            best_xy = xy;
+            best_yy = yy;
+            T = T1;
+            g = g1;
+        }
+    }
+    best_xy = MAX32(0, best_xy);
+    if (best_yy <= best_xy)
+        pg = Q15ONE;
+    else
+        pg = best_xy / (best_yy + 1);
 
-   for (k=0;k<3;k++)
-      xcorr[k] = celt_inner_prod(x, x-(T+k-1), N);
-   if ((xcorr[2]-xcorr[0]) > MULT16_32_Q15(QCONST16(.7f,15),xcorr[1]-xcorr[0]))
-      offset = 1;
-   else if ((xcorr[0]-xcorr[2]) > MULT16_32_Q15(QCONST16(.7f,15),xcorr[1]-xcorr[2]))
-      offset = -1;
-   else
-      offset = 0;
-   if (pg > g)
-      pg = g;
-   *T0_ = 2*T+offset;
+    for (k = 0; k < 3; k++)
+        xcorr[k] = celt_inner_prod(x, x - (T + k - 1), N);
+    if ((xcorr[2] - xcorr[0]) > MULT16_32_Q15(QCONST16(.7f, 15), xcorr[1] - xcorr[0]))
+        offset = 1;
+    else if ((xcorr[0] - xcorr[2]) > MULT16_32_Q15(QCONST16(.7f, 15), xcorr[1] - xcorr[2]))
+        offset = -1;
+    else
+        offset = 0;
+    if (pg > g)
+        pg = g;
+    *T0_ = 2 * T + offset;
 
-   if (*T0_<minperiod0)
-      *T0_=minperiod0;
-   return pg;
+    if (*T0_ < minperiod0)
+        *T0_ = minperiod0;
+    rnnoise_free(yy_lookup);
+    return pg;
 }
