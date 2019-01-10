@@ -82,7 +82,7 @@ static const opus_int16 eband5ms[] = {
 
 typedef struct {
     int init;
-    stb_fft_real_plan *kfft;
+    stb_fft_plan *kfft;
     float half_window[FRAME_SIZE];
     float dct_table[NB_BANDS * NB_BANDS];
 } CommonState;
@@ -91,7 +91,7 @@ struct DenoiseState {
     float analysis_mem[FRAME_SIZE];
     float cepstral_mem[CEPS_MEM][NB_BANDS];
     int memid;
-    float synthesis_mem[WINDOW_SIZE];
+    float synthesis_mem[FRAME_SIZE];
     float pitch_buf[PITCH_BUF_SIZE];
     float last_gain;
     int last_period;
@@ -192,11 +192,7 @@ CommonState common;
 static void check_init() {
     int i;
     if (common.init) return;
-    int plan_size = stb_fft_real_plan_dft_1d(WINDOW_SIZE, NULL);
-    if (plan_size <= 0)
-        return;
-    common.kfft = (stb_fft_real_plan *) calloc(plan_size, 1);
-    stb_fft_real_plan_dft_1d(WINDOW_SIZE, common.kfft);
+    common.kfft = stb_fft_plan_dft_1d(2 * FRAME_SIZE);
     for (i = 0; i < FRAME_SIZE; i++)
         common.half_window[i] = (float) sin(
                 .5 * M_PI * sin(.5 * M_PI * (i + .5) / FRAME_SIZE) * sin(.5 * M_PI * (i + .5) / FRAME_SIZE));
@@ -241,16 +237,64 @@ static void idct(float *out, const float *in) {
 }
 #endif
 
-static void forward_transform(cmplx *out, float *in) {
+static void forward_transform(cmplx *out, const float *in) {
     int i;
+    cmplx *x = rnnoise_alloc(WINDOW_SIZE * sizeof(cmplx));
+    cmplx *y = rnnoise_alloc(WINDOW_SIZE * sizeof(cmplx));
+    if ((y == NULL) || (x == NULL)) {
+        printf("[%s %d] malloc failed\n", __FUNCTION__, __LINE__);
+        rnnoise_free(y);
+        rnnoise_free(x);
+        return;
+    }
     check_init();
     float norm = 1.0f / WINDOW_SIZE;
     for (i = 0; i < FRAME_SIZE; i++) {
-        const float t = common.half_window[i] * norm;
-        in[i] *= t;
-        in[WINDOW_SIZE - 1 - i] *= t;
+        x[i].real = in[i] * norm * common.half_window[i];
+        x[i].imag = 0;
+        x[WINDOW_SIZE - 1 - i].real = in[WINDOW_SIZE - 1 - i] * norm * common.half_window[i];
+        x[WINDOW_SIZE - 1 - i].imag = 0;
     }
-    stb_fft_r2c_exec(common.kfft, in, out);
+    stb_fft_exec(common.kfft, x, y);
+    for (i = 0; i < FREQ_SIZE; i++) {
+        out[i] = y[i];
+    }
+    rnnoise_free(x);
+    rnnoise_free(y);
+}
+
+static void inverse_transform(float *out, const cmplx *in) {
+    int i;
+    cmplx *x = rnnoise_alloc(WINDOW_SIZE * sizeof(cmplx));
+    cmplx *y = rnnoise_alloc(WINDOW_SIZE * sizeof(cmplx));
+    if ((y == NULL) || (x == NULL)) {
+        printf("[%s %d] malloc failed\n", __FUNCTION__, __LINE__);
+        rnnoise_free(y);
+        rnnoise_free(x);
+        return;
+    }
+    check_init();
+    float norm = 1.0f / WINDOW_SIZE;
+    for (i = 0; i < FREQ_SIZE; i++) {
+        x[i].real = in[i].real * norm;
+        x[i].imag = in[i].imag * norm;
+    }
+    for (; i < WINDOW_SIZE; i++) {
+        x[i].real = x[WINDOW_SIZE - i].real;
+        x[i].imag = -x[WINDOW_SIZE - i].imag;
+    }
+    stb_fft_exec(common.kfft, x, y);
+    /* output in reverse order for IFFT. */
+    out[0] = WINDOW_SIZE * y[0].real;
+    for (i = 1; i < WINDOW_SIZE; i++) {
+        out[i] = WINDOW_SIZE * y[WINDOW_SIZE - i].real;
+    }
+    for (i = 0; i < FRAME_SIZE; i++) {
+        out[i] *= common.half_window[i];
+        out[WINDOW_SIZE - 1 - i] *= common.half_window[i];
+    }
+    rnnoise_free(x);
+    rnnoise_free(y);
 }
 
 
@@ -337,7 +381,7 @@ static int compute_frame_features(DenoiseState *st, cmplx *X, cmplx *P,
     compute_band_energy(Ep, P);
     compute_band_corr(Exp, X, P);
     for (i = 0; i < NB_BANDS; i++)
-        Exp[i] = Exp[i] * fastInvSqrt(.001f + Ex[i] * Ep[i]);
+        Exp[i] = Exp[i] * (1.0f / sqrtf(.001f + Ex[i] * Ep[i]));
     dct(tmp, Exp);
     memcpy(features + NB_BANDS + 2 * NB_DELTA_CEPS, tmp, sizeof(float) * NB_DELTA_CEPS);
     features[NB_BANDS + 2 * NB_DELTA_CEPS] -= 1.3f;
@@ -395,24 +439,21 @@ static int compute_frame_features(DenoiseState *st, cmplx *X, cmplx *P,
     return TRAINING && E < 0.1f;
 }
 
-static void frame_synthesis(DenoiseState *st, short *out, cmplx *input) {
-    check_init();
+static void frame_synthesis(DenoiseState *st, float *out, const cmplx *input) {
+    float *x = rnnoise_alloc(WINDOW_SIZE * sizeof(float));
+    if (x == NULL) {
+        printf("[%s %d] malloc failed\n", __FUNCTION__, __LINE__);
+        return;
+    }
     int i;
-    int idx = 0;
-    for (i = FREQ_SIZE; i < WINDOW_SIZE; i++) {
-        input[i].real = input[WINDOW_SIZE - i].real;
-        input[i].imag = -input[WINDOW_SIZE - i].imag;
-        idx = i - FREQ_SIZE;
-        out[idx] = (short) (st->synthesis_mem[idx + FRAME_SIZE]);
-    }
-    stb_fft_c2r_exec(common.kfft, input, st->synthesis_mem);
-    for (i = 0; i < FRAME_SIZE; i++) {
-        out[i] += (short) (st->synthesis_mem[i] * common.half_window[i]);
-        st->synthesis_mem[WINDOW_SIZE - 1 - i] *= common.half_window[i];
-    }
+    inverse_transform(x, input);
+    for (i = 0; i < FRAME_SIZE; i++)
+        out[i] = x[i] + st->synthesis_mem[i];
+    memcpy(st->synthesis_mem, x + FRAME_SIZE, FRAME_SIZE * sizeof(float));
+    rnnoise_free(x);
 }
 
-static void biquad(float *y, float mem[2], const short *x, const float *b, const float *a, int N) {
+static void biquad(float *y, float mem[2], const float *x, const float *b, const float *a, int N) {
     int i;
     for (i = 0; i < N; i++) {
         float xi, yi;
@@ -445,9 +486,9 @@ void pitch_filter(cmplx *X, const cmplx *P, const float *Ex, const float *Ep,
             r[i] = 1;
         else
             r[i] = SQUARE(Exp[i]) * (1 - SQUARE(g[i])) / (.001f + SQUARE(g[i]) * (1 - SQUARE(Exp[i])));
-        r[i] = 1.f / fastInvSqrt(MIN16(1, MAX16(0, r[i])));
+        r[i] = sqrtf(MIN16(1, MAX16(0, r[i])));
 #endif
-        r[i] *= 1.f / fastInvSqrt(Ex[i] / (1e-8f + Ep[i]));
+        r[i] *= sqrtf(Ex[i] / (1e-8f + Ep[i]));
     }
     interp_band_gain(rf, r);
     for (i = 0; i < FREQ_SIZE; i++) {
@@ -464,7 +505,7 @@ void pitch_filter(cmplx *X, const cmplx *P, const float *Ex, const float *Ep,
         return;
     }
     for (i = 0; i < NB_BANDS; i++) {
-        norm[i] =  1.f / fastInvSqrt(Ex[i] / (1e-8f + newE[i]));
+        norm[i] = sqrtf(Ex[i] / (1e-8 + newE[i]));
     }
     interp_band_gain(normf, norm);
     for (i = 0; i < FREQ_SIZE; i++) {
@@ -475,13 +516,15 @@ void pitch_filter(cmplx *X, const cmplx *P, const float *Ex, const float *Ep,
     rnnoise_free(normf);
 }
 
-float rnnoise_process_frame(DenoiseState *st, short *out, const short *in) {
+float rnnoise_process_frame(DenoiseState *st, float *out, const float *in) {
     int i;
-    cmplx *input = rnnoise_alloc(WINDOW_SIZE * sizeof(cmplx));
+    cmplx *input = rnnoise_alloc(FREQ_SIZE * sizeof(cmplx));
     cmplx *P = rnnoise_alloc(WINDOW_SIZE * sizeof(cmplx));
-    if ((input == NULL) || (P == NULL)) {
+    float *x = rnnoise_alloc(FRAME_SIZE * sizeof(float));
+    if ((input == NULL) || (P == NULL) || (x == NULL)) {
         printf("[%s %d] malloc failed\n", __FUNCTION__, __LINE__);
         rnnoise_free(P);
+        rnnoise_free(x);
         rnnoise_free(input);
         return 0;
     }
@@ -492,10 +535,11 @@ float rnnoise_process_frame(DenoiseState *st, short *out, const short *in) {
     float gf[FREQ_SIZE] = {1};
     float vad_prob = 0;
     int silence;
-    static const float a_hp[2] = {-1.99599f, 0.99600f};
+    static const float a_hp[2] = {-1.99599, 0.99600};
     static const float b_hp[2] = {-2, 1};
-    biquad(st->synthesis_mem, st->mem_hp_x, in, b_hp, a_hp, FRAME_SIZE);
-    silence = compute_frame_features(st, input, P, Ex, Ep, Exp, features, st->synthesis_mem);
+    biquad(x, st->mem_hp_x, in, b_hp, a_hp, FRAME_SIZE);
+    silence = compute_frame_features(st, input, P, Ex, Ep, Exp, features, x);
+
     if (!silence) {
         compute_rnn(&st->rnn, g, &vad_prob, features);
         pitch_filter(input, P, Ex, Ep, Exp, g);
@@ -512,9 +556,11 @@ float rnnoise_process_frame(DenoiseState *st, short *out, const short *in) {
         }
 #endif
     }
+
     frame_synthesis(st, out, input);
     rnnoise_free(input);
     rnnoise_free(P);
+    rnnoise_free(x);
     return vad_prob;
 }
 
@@ -569,7 +615,7 @@ int main(int argc, char **argv) {
     fread(tmp, sizeof(short), FRAME_SIZE, f2);
   }
   while (1) {
-    kiss_fft_cpx X[FREQ_SIZE], Y[FREQ_SIZE], N[FREQ_SIZE], P[WINDOW_SIZE];
+    cmplx X[FREQ_SIZE], Y[FREQ_SIZE], N[FREQ_SIZE], P[WINDOW_SIZE];
     float Ex[NB_BANDS], Ey[NB_BANDS], En[NB_BANDS], Ep[NB_BANDS];
     float Exp[NB_BANDS];
     float Ln[NB_BANDS];

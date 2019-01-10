@@ -4,6 +4,10 @@
 #include <stdlib.h>
 #include <stdint.h>
 
+#define DR_MP3_IMPLEMENTATION
+
+#include "dr_mp3.h"
+
 #define DR_WAV_IMPLEMENTATION
 
 #include "dr_wav.h"
@@ -72,13 +76,16 @@ static double calcElapsed(double start, double end) {
 }
 
 
-void wavWrite_int16(char *filename, int16_t *buffer, int sampleRate, uint32_t totalSampleCount) {
+void wavWrite_f32(char *filename, float *buffer, int sampleRate, uint32_t totalSampleCount) {
     drwav_data_format format;
     format.container = drwav_container_riff;
-    format.format = DR_WAVE_FORMAT_PCM;
+    format.format = DR_WAVE_FORMAT_IEEE_FLOAT;
     format.channels = 1;
     format.sampleRate = (drwav_uint32) sampleRate;
-    format.bitsPerSample = 16;
+    format.bitsPerSample = 32;
+    for (int32_t i = 0; i < totalSampleCount; ++i) {
+        buffer[i] = drwav_clamp(buffer[i], -32768, 32767) * (1.0f / 32768.0f);
+    }
     drwav *pWav = drwav_open_file_write(filename, &format);
     if (pWav) {
         drwav_uint64 samplesWritten = drwav_write(pWav, totalSampleCount, buffer);
@@ -90,21 +97,51 @@ void wavWrite_int16(char *filename, int16_t *buffer, int sampleRate, uint32_t to
     }
 }
 
-int16_t *wavRead_int16(char *filename, uint32_t *sampleRate, uint64_t *totalSampleCount) {
-    unsigned int channels;
-    int16_t *buffer = drwav_open_and_read_file_s16(filename, &channels, sampleRate, totalSampleCount);
-    if (buffer == NULL) {
-        fprintf(stderr, "ERROR\n");
+float *wavRead_f32(const char *filename, uint32_t *fs, uint64_t *sampleCount) {
+    unsigned int channels = 1;
+    unsigned int sampleRate = 0;
+    drwav_uint64 totalSampleCount = 0;
+    float *input = drwav_open_file_and_read_pcm_frames_f32(filename, &channels, &sampleRate, &totalSampleCount);
+    if (input == NULL) {
+        drmp3_config pConfig;
+        input = drmp3_open_file_and_read_f32(filename, &pConfig, &totalSampleCount);
+        if (input != NULL) {
+            channels = pConfig.outputChannels;
+            sampleRate = pConfig.outputSampleRate;
+        }
+    }
+    if (input == NULL) {
+        fprintf(stderr, "read file [%s] error.\n", filename);
         exit(1);
     }
-    if (channels != 1) {
-        drwav_free(buffer);
-        buffer = NULL;
-        *sampleRate = 0;
-        *totalSampleCount = 0;
+    *fs = sampleRate;
+    *sampleCount = totalSampleCount;
+
+    float norm = (32768.0f) / channels;
+    float *in = input;
+    float *output = input;
+    for (int32_t i = 0; i < totalSampleCount; ++i) {
+        float out = 0;
+        for (int32_t c = 0; c < channels; ++c) {
+            out += in[c];
+        }
+        float sample = out * norm;
+        if (sample >= 32766.5)
+            out = (int16_t) 32767;
+        else if (sample <= -32767.5)
+            out = (int16_t) -32768;
+        else {
+            short s = (int16_t) (sample + .5f);
+            s -= (s < 0);
+            out = s;
+        }
+        output[i] = out;
+        in += channels;
     }
-    return buffer;
+
+    return input;
 }
+
 
 void splitpath(const char *path, char *drv, char *dir, char *name, char *ext) {
     const char *end;
@@ -145,21 +182,20 @@ void splitpath(const char *path, char *drv, char *dir, char *name, char *ext) {
     }
 }
 
-//ref :https://github.com/cpuimage/resampler
-//poly s16 version
-void poly_resample_s16(const int16_t *input, int16_t *output, int in_frames, int out_frames, int channels) {
+//poly f32 version
+void poly_resample_f32(const float *input, float *output, int in_frames, int out_frames, int channels) {
     double scale = (1.0 * in_frames) / out_frames;
-    int head = (int) (1.0 / scale);
+    int head = (int) (1.0f / scale);
     float pos = 0;
     for (int i = 0; i < head; i++) {
         for (int c = 0; c < channels; c++) {
-            int sample_1 = input[0 + c];
-            int sample_2 = input[channels + c];
-            int sample_3 = input[(channels << 1) + c];
-            int poly_3 = sample_1 + sample_3 - (sample_2 << 1);
-            int poly_2 = (sample_2 << 2) + sample_1 - (sample_1 << 2) - sample_3;
-            int poly_1 = sample_1;
-            output[i * channels + c] = (int16_t) ((poly_3 * pos * pos + poly_2 * pos) * 0.5f + poly_1);
+            float sample_1 = input[0 + c];
+            float sample_2 = input[channels + c];
+            float sample_3 = input[(channels << 1) + c];
+            float poly_3 = sample_1 + sample_3 - sample_2 * 2;
+            float poly_2 = sample_2 * 4 - (sample_1 * 3) - sample_3;
+            float poly_1 = sample_1;
+            output[i * channels + c] = (poly_3 * pos * pos + poly_2 * pos) * 0.5f + poly_1;
         }
         pos += scale;
     }
@@ -168,23 +204,23 @@ void poly_resample_s16(const int16_t *input, int16_t *output, int in_frames, int
         int npos = (int) in_pos;
         pos = in_pos - npos + 1;
         for (int c = 0; c < channels; c++) {
-            int sample_1 = input[(npos - 1) * channels + c];
-            int sample_2 = input[(npos + 0) * channels + c];
-            int sample_3 = input[(npos + 1) * channels + c];
-            int poly_3 = sample_1 + sample_3 - (sample_2 << 1);
-            int poly_2 = (sample_2 << 2) + sample_1 - (sample_1 << 2) - sample_3;
-            int poly_1 = sample_1;
-            output[n * channels + c] = (int16_t) ((poly_3 * pos * pos + poly_2 * pos) * 0.5f + poly_1);
+            float sample_1 = input[(npos - 1) * channels + c];
+            float sample_2 = input[(npos + 0) * channels + c];
+            float sample_3 = input[(npos + 1) * channels + c];
+            float poly_3 = sample_1 + sample_3 - sample_2 * 2;
+            float poly_2 = sample_2 * 4 - (sample_1 * 3) - sample_3;
+            float poly_1 = sample_1;
+            output[n * channels + c] = (poly_3 * pos * pos + poly_2 * pos) * 0.5f + poly_1;
         }
         in_pos += scale;
     }
 }
 
-void denoise_proc(int16_t *buffer, uint32_t buffen_len) {
+void denoise_proc(float *buffer, uint32_t buffen_len) {
 #define  FRAME_SIZE   480
     DenoiseState *st;
     st = rnnoise_create();
-    int16_t patch_buffer[FRAME_SIZE];
+    float patch_buffer[FRAME_SIZE];
     if (st != NULL) {
         uint32_t frames = buffen_len / FRAME_SIZE;
         uint32_t lastFrame = buffen_len % FRAME_SIZE;
@@ -193,10 +229,10 @@ void denoise_proc(int16_t *buffer, uint32_t buffen_len) {
             buffer += FRAME_SIZE;
         }
         if (lastFrame != 0) {
-            memset(patch_buffer, 0, FRAME_SIZE * sizeof(int16_t));
-            memcpy(patch_buffer, buffer, lastFrame * sizeof(int16_t));
+            memset(patch_buffer, 0, FRAME_SIZE * sizeof(float));
+            memcpy(patch_buffer, buffer, lastFrame * sizeof(float));
             rnnoise_process_frame(st, patch_buffer, patch_buffer);
-            memcpy(buffer, patch_buffer, lastFrame * sizeof(int16_t));
+            memcpy(buffer, patch_buffer, lastFrame * sizeof(float));
         }
     }
     rnnoise_destroy(st);
@@ -205,19 +241,19 @@ void denoise_proc(int16_t *buffer, uint32_t buffen_len) {
 void rnnDeNoise(char *in_file, char *out_file) {
     uint32_t in_sampleRate = 0;
     uint64_t in_size = 0;
-    int16_t *data_in = wavRead_int16(in_file, &in_sampleRate, &in_size);
+    float *data_in = wavRead_f32(in_file, &in_sampleRate, &in_size);
     uint32_t out_sampleRate = 48000;
     uint32_t out_size = (uint32_t) (in_size * ((float) out_sampleRate / in_sampleRate));
-    int16_t *data_out = (int16_t *) malloc(out_size * sizeof(int16_t));
+    float *data_out = (float *) malloc(out_size * sizeof(float));
     int channels = 1;
     if (data_in != NULL && data_out != NULL) {
-        poly_resample_s16(data_in, data_out, in_size, out_size, channels);
+        poly_resample_f32(data_in, data_out, in_size, out_size, channels);
         double startTime = now();
         denoise_proc(data_out, out_size);
         double time_interval = calcElapsed(startTime, now());
         printf("time interval: %d ms\n ", (int) (time_interval * 1000));
-        poly_resample_s16(data_out, data_in, out_size, in_size, channels);
-        wavWrite_int16(out_file, data_in, in_sampleRate, (uint32_t) in_size);
+        poly_resample_f32(data_out, data_in, out_size, in_size, channels);
+        wavWrite_f32(out_file, data_in, in_sampleRate, (uint32_t) in_size);
         free(data_in);
         free(data_out);
     } else {
@@ -231,18 +267,30 @@ int main(int argc, char **argv) {
     printf("Audio Noise Reduction\n");
     printf("blog:http://cpuimage.cnblogs.com/\n");
     printf("e-mail:gaozhihan@vip.qq.com\n");
-    if (argc < 2)
-        return -1;
 
+    if (argc < 2) {
+        printf("usage:\n");
+        printf("./rnnoise input.wav\n");
+        printf("./rnnoise input.mp3\n");
+        printf("or\n");
+        printf("./rnnoise input.wav output.wav\n");
+        printf("./rnnoise input.mp3 output.wav\n");
+        return -1;
+    }
     char *in_file = argv[1];
-    char drive[3];
-    char dir[256];
-    char fname[256];
-    char ext[256];
-    char out_file[1024];
-    splitpath(in_file, drive, dir, fname, ext);
-    sprintf(out_file, "%s%s%s_out%s", drive, dir, fname, ext);
-    rnnDeNoise(in_file, out_file);
+    if (argc > 2) {
+        char *out_file = argv[2];
+        rnnDeNoise(in_file, out_file);
+    } else {
+        char drive[3];
+        char dir[256];
+        char fname[256];
+        char ext[256];
+        char out_file[1024];
+        splitpath(in_file, drive, dir, fname, ext);
+        sprintf(out_file, "%s%s%s_out.wav", drive, dir, fname);
+        rnnDeNoise(in_file, out_file);
+    }
     printf("press any key to exit.\n");
     getchar();
     return 0;

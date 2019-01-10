@@ -32,18 +32,4 @@ static RNN_INLINE void rnnoise_free(void *ptr) {
 
 #endif
 
-
-// 1/sqrt()
-static RNN_INLINE float fastInvSqrt(float fX) {
-    float fHalf = 0.5f * fX;
-    int i = *(int *) (&fX);
-    i = 0x5f3759df - (i >> 1); // This line hides a LOT of math!
-    fX = *(float *) (&i);
-
-    // repeat this statement for a better approximation
-    fX = fX * (1.5f - fHalf * fX * fX);
-    fX = fX * (1.5f - fHalf * fX * fX);
-
-    return fX;
-}
 #endif

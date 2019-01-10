@@ -277,7 +277,7 @@ void celt_pitch_xcorr(const opus_val16 *_x, const opus_val16 *_y,
 #endif
 }
 
-inline float fastabs(float f) {
+float fastabs(float f) {
     int i = ((*(int *) &f) & 0x7fffffff);
     return (*(float *) &i);
 }
@@ -426,7 +426,7 @@ static opus_val16 compute_pitch_gain(opus_val32 xy, opus_val32 xx, opus_val32 yy
 
 
 static opus_val16 compute_pitch_gain(opus_val32 xy, opus_val32 xx, opus_val32 yy) {
-    return xy * fastInvSqrt(1 + xx * yy);
+    return xy * (1.0f/sqrtf(1 + xx * yy));
 }
 
 #endif
