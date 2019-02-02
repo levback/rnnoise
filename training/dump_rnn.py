@@ -49,6 +49,39 @@ def printLayer(f, hf, layer):
         hf.write('#define {}_SIZE {}\n'.format(name.upper(), weights[0].shape[1]))
         hf.write('extern const DenseLayer {};\n\n'.format(name));
 
+from keras.constraints import Constraint
+from keras import backend as K
+import numpy as np
+
+def my_crossentropy(y_true, y_pred):
+    return K.mean(2*K.abs(y_true-0.5) * K.binary_crossentropy(y_pred, y_true), axis=-1)
+
+def mymask(y_true):
+    return K.minimum(y_true+1., 1.)
+
+def msse(y_true, y_pred):
+    return K.mean(mymask(y_true) * K.square(K.sqrt(y_pred) - K.sqrt(y_true)), axis=-1)
+
+def mycost(y_true, y_pred):
+    return K.mean(mymask(y_true) * (10*K.square(K.square(K.sqrt(y_pred) - K.sqrt(y_true))) + K.square(K.sqrt(y_pred) - K.sqrt(y_true)) + 0.01*K.binary_crossentropy(y_pred, y_true)), axis=-1)
+
+def my_accuracy(y_true, y_pred):
+    return K.mean(2*K.abs(y_true-0.5) * K.equal(y_true, K.round(y_pred)), axis=-1)
+
+class WeightClip(Constraint):
+    '''Clips the weights incident to each hidden unit to be inside a range
+    '''
+    def __init__(self, c=2, name='WeightClip'):
+        self.c = c
+
+    def __call__(self, p):
+        return K.clip(p, -self.c, self.c)
+
+    def get_config(self):
+        return {'name': self.__class__.__name__,
+            'c': self.c}
+
+
 
 def foo(c, name):
     return 1
@@ -57,7 +90,8 @@ def mean_squared_sqrt_error(y_true, y_pred):
     return K.mean(K.square(K.sqrt(y_pred) - K.sqrt(y_true)), axis=-1)
 
 
-model = load_model(sys.argv[1], custom_objects={'msse': mean_squared_sqrt_error, 'mean_squared_sqrt_error': mean_squared_sqrt_error, 'my_crossentropy': mean_squared_sqrt_error, 'mycost': mean_squared_sqrt_error, 'WeightClip': foo})
+#model = load_model(sys.argv[1], custom_objects={'msse': mean_squared_sqrt_error, 'mean_squared_sqrt_error': mean_squared_sqrt_error, 'my_crossentropy': mean_squared_sqrt_error, 'mycost': mean_squared_sqrt_error, 'WeightClip': foo})
+model = load_model(sys.argv[1], custom_objects={'msse':msse, 'mean_squared_sqrt_error': mean_squared_sqrt_error, 'my_crossentropy':my_crossentropy, 'mycost':mycost, 'WeightClip':WeightClip})
 
 weights = model.get_weights()
 
