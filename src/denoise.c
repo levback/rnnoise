@@ -338,8 +338,8 @@ static void frame_analysis(DenoiseState *st, cmplx *X, float *Ex, const float *i
     memcpy(st->analysis_mem, in, sizeof(float) * FRAME_SIZE);
     forward_transform(X, x);
 #if TRAINING
-    for (i = lowpass; i < FREQ_SIZE; i++)
-        X[i].r = X[i].i = 0;
+    for (int i = lowpass; i < FREQ_SIZE; i++)
+        X[i].real = X[i].imag = 0;
 #endif
     compute_band_energy(Ex, X);
     rnnoise_free(x);
@@ -626,7 +626,7 @@ int main(int argc, char **argv) {
     float vad=0;
     float vad_prob;
     float E=0;
-    if (count==50000000) break;
+    if (count==50000) break;
     if (++gain_change_count > 2821) {
       speech_gain = pow(10., (-40+(rand()%60))/20.);
       noise_gain = pow(10., (-30+(rand()%50))/20.);
@@ -708,10 +708,10 @@ int main(int argc, char **argv) {
     printf("%f\n", vad);
 #endif
 #if 1
-    fwrite(features, sizeof(float), NB_FEATURES, stdout);
-    fwrite(g, sizeof(float), NB_BANDS, stdout);
-    fwrite(Ln, sizeof(float), NB_BANDS, stdout);
-    fwrite(&vad, sizeof(float), 1, stdout);
+    fwrite(features, sizeof(float), NB_FEATURES, fout);
+    fwrite(g, sizeof(float), NB_BANDS, fout);
+    fwrite(Ln, sizeof(float), NB_BANDS, fout);
+    fwrite(&vad, sizeof(float), 1, fout);
 #endif
 #if 0
     compute_rnn(&noisy->rnn, g, &vad_prob, features);
