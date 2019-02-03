@@ -9,9 +9,12 @@ SET(CMAKE_BUILD_TYPE "Release")
 
 # where is the target environment 
 #SET(CMAKE_FIND_ROOT_PATH  /opt/gcc-armv7l-meego-linux-gnueabi-2016.01_linux/cross/armv7l-meego-linux-gnueabi/sys-root/)
+#SET(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+#SET(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+#SET(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 
 # specify the compiler flag
-#SET(CMAKE_C_FLAGS  "-std=c99 -O3 -mfpu=neon")
+#SET(CMAKE_C_FLAGS  "-std=gnu99 -O3 -mfpu=neon")
 #SET(CMAKE_CXX_FLAGS  "-std=c++11 -O3 -mfpu=neon")
 
 set(RN_NOISE_SRC
@@ -24,4 +27,4 @@ set(RN_NOISE_SRC
 
 include_directories(include)
 add_executable(rnnoise_demo ${RN_NOISE_SRC})
-target_link_libraries(rnnoise_demo -lm)
+target_link_libraries(rnnoise_demo -lm -lrt)
