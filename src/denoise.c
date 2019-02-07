@@ -603,13 +603,13 @@ int main(int argc, char **argv) {
   st = rnnoise_create();
   noise_state = rnnoise_create();
   noisy = rnnoise_create();
-  if (argc!=4) {
-    fprintf(stderr, "usage: %s <speech> <noise> <output denoised>\n", argv[0]);
+  if (argc!=5) {
+    fprintf(stderr, "usage: %s <speech> <noise> <sample count> <output denoised>\n", argv[0]);
     return 1;
   }
   f1 = fopen(argv[1], "r");
   f2 = fopen(argv[2], "r");
-  fout = fopen(argv[3], "w");
+  fout = fopen(argv[4], "w");
   for(i=0;i<150;i++) {
     short tmp[FRAME_SIZE];
     fread(tmp, sizeof(short), FRAME_SIZE, f2);
@@ -626,7 +626,7 @@ int main(int argc, char **argv) {
     float vad=0;
     float vad_prob;
     float E=0;
-    if (count==50000) break;
+    if (count == atoi(argv[3])) break;
     if (++gain_change_count > 2821) {
       speech_gain = pow(10., (-40+(rand()%60))/20.);
       noise_gain = pow(10., (-30+(rand()%50))/20.);

@@ -46,8 +46,8 @@ Build audio feature extraction tool
 Use generated "denoise_training" to get the audio feature array from speech & noise audio clip
 ```shell
 # ./denoise_training
-usage: ./denoise_training <speech> <noise> <output denoised>
-# ./denoise_training speech.wav noise.wav feature.dat
+usage: ./denoise_training <speech> <noise> <sample count> <output denoised>
+# ./denoise_training speech.wav noise.wav 50000 feature.dat
 matrix size: 50000 x 87
 ```
 
