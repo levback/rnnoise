@@ -11,7 +11,7 @@
 While it is meant to be used as a library, a simple command-line tool is
 provided as an example.
 
-### build rnnoise_demo with CMake
+### build librnnoise & rnnoise_demo with CMake
 
 ```shell
 # mkdir build

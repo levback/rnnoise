@@ -17,14 +17,6 @@ SET(CMAKE_BUILD_TYPE "Release")
 #SET(CMAKE_C_FLAGS  "-std=gnu99 -O3 -mfpu=neon")
 #SET(CMAKE_CXX_FLAGS  "-std=c++11 -O3 -mfpu=neon")
 
-set(RN_NOISE_SRC
-        src/denoise.c
-        src/celt_lpc.c
-        src/pitch.c
-        src/rnn.c
-        src/rnn_data.c
-        examples/rnnoise_demo.c)
+add_subdirectory(src)
+add_subdirectory(examples)
 
-include_directories(include)
-add_executable(rnnoise_demo ${RN_NOISE_SRC})
-target_link_libraries(rnnoise_demo -lm -lrt)
