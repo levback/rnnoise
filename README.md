@@ -4,7 +4,7 @@
 
 ## Guide Doc
 * [RNNoise: Learning Noise Suppression](https://people.xiph.org/~jm/demo/rnnoise/)
-* [翻译【RNNoise】用深度学习抑制噪声](https://blog.csdn.net/weifenglin1997/article/details/78140296)
+* [RNNoise: Learning Noise Suppression（深度学习噪声抑制）](https://blog.csdn.net/dakeboy/article/details/88039977)
 * [基于RNN的音频降噪算法](https://cloud.tencent.com/developer/article/1094567)
 
 ## Quick Demo application
