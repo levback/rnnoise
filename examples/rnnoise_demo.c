@@ -75,7 +75,28 @@ static double calcElapsed(double start, double end) {
     return took + end;
 }
 
-
+void wavWrite_s16(char *filename, float *buffer, int sampleRate, uint32_t totalSampleCount, uint32_t channels) {
+    drwav_data_format format;
+    format.container = drwav_container_riff;
+    format.format = DR_WAVE_FORMAT_PCM;
+    format.channels = channels;
+    format.sampleRate = (drwav_uint32) sampleRate;
+    format.bitsPerSample = 16;
+    short *buffer_16=  (short*) buffer
+    for (int32_t i = 0; i < totalSampleCount; ++i) {
+        buffer_16[i] = drwav_clamp(buffer[i], -32768, 32767);
+    }
+    drwav *pWav = drwav_open_file_write(filename, &format);
+    if (pWav) {
+        drwav_uint64 samplesWritten = drwav_write(pWav, totalSampleCount, buffer);
+        drwav_uninit(pWav);
+        if (samplesWritten != totalSampleCount) {
+            fprintf(stderr, "write file [%s] error.\n", filename);
+            exit(1);
+        }
+    }
+}
+ 
 void wavWrite_f32(char *filename, float *buffer, int sampleRate, uint32_t totalSampleCount, uint32_t channels) {
     drwav_data_format format;
     format.container = drwav_container_riff;
@@ -265,7 +286,7 @@ void rnnDeNoise(char *in_file, char *out_file) {
         denoise_proc(buffer, sampleCount, sampleRate, channels);
         double time_interval = calcElapsed(startTime, now());
         printf("time interval: %f ms\n ", (time_interval * 1000));
-        wavWrite_f32(out_file, buffer, sampleRate, (uint32_t) sampleCount, channels);
+        wavWrite_s16(out_file, buffer, sampleRate, (uint32_t) sampleCount, channels);
         free(buffer);
     }
 }

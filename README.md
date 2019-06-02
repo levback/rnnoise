@@ -1,7 +1,7 @@
 # RNNoise is a noise suppression library based on a recurrent neural network
  - ref: https://github.com/xiph/rnnoise
  - ref: https://github.com/cpuimage/rnnoise
-
+ - ref: https://github.com/david8862/rnnoise
 ## Guide Doc
 * [RNNoise: Learning Noise Suppression](https://people.xiph.org/~jm/demo/rnnoise/)
 * [RNNoise: Learning Noise Suppression（深度学习噪声抑制）](https://blog.csdn.net/dakeboy/article/details/88039977)
@@ -62,3 +62,8 @@ Pick feature array to "training" dir and go through the training process
 ```
 Training process will generate the RNN model weight code file (default is rnn_data.c) and layer definition header file (default is rnn_data.h). They can be used to refresh the "src/rnn_data.c", "src/rnn_data.h" and rebuild the rnnoise lib & demo app.
 
+# Donating
+
+If you found this project useful, consider buying me a coffee
+
+<a href="https://www.buymeacoffee.com/gaozhihan" target="_blank"><img src="https://www.buymeacoffee.com/assets/img/custom_images/black_img.png" alt="Buy Me A Coffee" style="height: auto !important;width: auto !important;" ></a>
