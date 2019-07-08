@@ -82,7 +82,7 @@ void wavWrite_s16(char *filename, float *buffer, int sampleRate, uint32_t totalS
     format.channels = channels;
     format.sampleRate = (drwav_uint32) sampleRate;
     format.bitsPerSample = 16;
-    short *buffer_16=  (short*) buffer
+    short *buffer_16=  (short*) buffer;
     for (int32_t i = 0; i < totalSampleCount; ++i) {
         buffer_16[i] = drwav_clamp(buffer[i], -32768, 32767);
     }
