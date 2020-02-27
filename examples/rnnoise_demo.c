@@ -83,7 +83,8 @@ void wavWrite_s16(char *filename, float *buffer, int sampleRate, uint32_t totalS
     format.sampleRate = (drwav_uint32) sampleRate;
     format.bitsPerSample = 16;
     short *buffer_16=  (short*) buffer;
-    for (int32_t i = 0; i < totalSampleCount; ++i) {
+    int32_t i;
+    for (i = 0; i < totalSampleCount; ++i) {
         buffer_16[i] = drwav_clamp(buffer[i], -32768, 32767);
     }
     drwav *pWav = drwav_open_file_write(filename, &format);
@@ -96,7 +97,7 @@ void wavWrite_s16(char *filename, float *buffer, int sampleRate, uint32_t totalS
         }
     }
 }
- 
+
 void wavWrite_f32(char *filename, float *buffer, int sampleRate, uint32_t totalSampleCount, uint32_t channels) {
     drwav_data_format format;
     format.container = drwav_container_riff;
@@ -104,7 +105,8 @@ void wavWrite_f32(char *filename, float *buffer, int sampleRate, uint32_t totalS
     format.channels = channels;
     format.sampleRate = (drwav_uint32) sampleRate;
     format.bitsPerSample = 32;
-    for (int32_t i = 0; i < totalSampleCount; ++i) {
+    int32_t i;
+    for (i = 0; i < totalSampleCount; ++i) {
         buffer[i] = drwav_clamp(buffer[i], -32768, 32767) * (1.0f / 32768.0f);
     }
     drwav *pWav = drwav_open_file_write(filename, &format);
@@ -134,7 +136,8 @@ float *wavRead_f32(const char *filename, uint32_t *sampleRate, uint64_t *sampleC
         exit(1);
     }
     *sampleCount = totalSampleCount * (*channels);
-    for (int32_t i = 0; i < *sampleCount; ++i) {
+    int32_t i;
+    for (i = 0; i < *sampleCount; ++i) {
         input[i] = input[i] * 32768.0f;
     }
     return input;
@@ -194,8 +197,9 @@ uint64_t Resample_f32(const float *input, float *output, int inSampleRate, int o
     const double normFixed = (1.0 / (1LL << 32));
     uint64_t step = ((uint64_t) (stepDist * fixedFraction + 0.5));
     uint64_t curOffset = 0;
-    for (uint32_t i = 0; i < outputSize; i += 1) {
-        for (uint32_t c = 0; c < channels; c += 1) {
+    uint32_t i,c;
+    for (i = 0; i < outputSize; i += 1) {
+        for (c = 0; c < channels; c += 1) {
             *output++ = (float) (input[c] + (input[c + channels] - input[c]) * (
                     (double) (curOffset >> 32) + ((curOffset & (fixedFraction - 1)) * normFixed)
             )
@@ -223,10 +227,11 @@ void denoise_proc(float *input, uint64_t sampleCount, uint32_t sampleRate, uint3
         fprintf(stderr, "malloc error.\n");
         return;
     }
-    for (int i = 0; i < channels; i++) {
+    int i,x;
+    for (i = 0; i < channels; i++) {
         sts[i] = rnnoise_create();
         if (sts[i] == NULL) {
-            for (int x = 0; x < i; x++) {
+            for (x = 0; x < i; x++) {
                 if (sts[x]) {
                     rnnoise_destroy(sts[x]);
                 }
@@ -239,14 +244,15 @@ void denoise_proc(float *input, uint64_t sampleCount, uint32_t sampleRate, uint3
     size_t frameStep = channels * perFrameSize;
     uint64_t frames = sampleCount / frameStep;
     uint64_t lastFrameSize = (sampleCount % frameStep) / channels;
-    for (int i = 0; i < frames; ++i) {
+    int c,k;
+    for (i = 0; i < frames; ++i) {
         Resample_f32(input, frameBuffer, sampleRate, targetSampleRate,
                      perFrameSize, channels);
-        for (int c = 0; c < channels; c++) {
-            for (int k = 0; k < targetFrameSize; k++)
+        for (c = 0; c < channels; c++) {
+            for (k = 0; k < targetFrameSize; k++)
                 processBuffer[k] = frameBuffer[k * channels + c];
             rnnoise_process_frame(sts[c], processBuffer, processBuffer);
-            for (int k = 0; k < targetFrameSize; k++)
+            for (k = 0; k < targetFrameSize; k++)
                 frameBuffer[k * channels + c] = processBuffer[k];
         }
         Resample_f32(frameBuffer, input, targetSampleRate, sampleRate, targetFrameSize, channels);
@@ -257,17 +263,17 @@ void denoise_proc(float *input, uint64_t sampleCount, uint32_t sampleRate, uint3
         uint64_t lastReasmpleSize = Resample_f32(input, frameBuffer, sampleRate,
                                                  targetSampleRate,
                                                  lastFrameSize, channels);
-        for (int c = 0; c < channels; c++) {
-            for (int k = 0; k < targetFrameSize; k++)
+        for (c = 0; c < channels; c++) {
+            for (k = 0; k < targetFrameSize; k++)
                 processBuffer[k] = frameBuffer[k * channels + c];
             rnnoise_process_frame(sts[c], processBuffer, processBuffer);
-            for (int k = 0; k < targetFrameSize; k++)
+            for (k = 0; k < targetFrameSize; k++)
                 frameBuffer[k * channels + c] = processBuffer[k];
         }
         Resample_f32(frameBuffer, input, targetSampleRate, sampleRate, lastReasmpleSize,
                      channels);
     }
-    for (int i = 0; i < channels; i++) {
+    for (i = 0; i < channels; i++) {
         if (sts[i]) {
             rnnoise_destroy(sts[i]);
         }
