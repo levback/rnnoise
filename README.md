@@ -59,3 +59,4 @@ Training process will generate the RNN model weight code file (default is rnn_da
 # References and Resources:
 - [david8862/rnnoise](https://github.com/david8862/rnnoise)
 - [RNNoise: Learning Noise Suppression](https://people.xiph.org/~jm/demo/rnnoise/)
+- [cpuimage/rnnoise](https://github.com/cpuimage/rnnoise)
